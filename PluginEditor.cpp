@@ -13,10 +13,15 @@ namespace
     // Positions dans le repere de reference 760 x 958 (meme cadrage qu'Echoflex),
     // relevees sur le visuel NGATE photo (background.png = 1520 x 1916 = 2 x 760 x 958)
     const Point<float> knobC   { 380.67f, 356.97f };
-    const float knobBox        = 158.0f;   // demi-cote de la zone du potard
+    const float knobBox        = 150.0f;   // demi-cote de la zone du potard (chapeau 144,6)
     const float startAng       = MathConstants<float>::twoPi - degreesToRadians (133.85f);   // comme la couronne du visuel
     const float endAng         = MathConstants<float>::twoPi + degreesToRadians (133.85f);
-    const float ptrR0 = 74.0f, ptrR1 = 149.0f, ptrW = 4.2f;          // rainure du repere (alu brosse)
+    // chapeau alu : centre de rotation reel (legerement decale de la couronne sur la photo)
+    const Point<float> capC    { 379.475f, 348.365f };
+    const float spriteHalf     = 144.25f;  // knob_light/dark.png : 577 px = 2 x 288.5 px du fond
+    const Point<float> spriteC { 143.975f, 143.865f };   // centre du chapeau dans le sprite (repere 760 x 958)
+    const float photoAngle     = degreesToRadians (-16.9f);   // position du repere sur la photo d'origine
+    const float ptrR0 = 65.6f, ptrR1 = 139.6f, ptrW = 6.2f;   // rainure du repere
 
     const float dotsR          = 175.57f;
     const int   numDots        = 31;
@@ -79,34 +84,72 @@ namespace
 //==============================================================================
 // POTARD THRESHOLD (vectoriel, mis en cache)
 //==============================================================================
+void ThresholdKnobLookAndFeel::prepare (int pixelSize)
+{
+    // sprites de matiere mis a la taille d'affichage une seule fois (rotation fluide ensuite)
+    if (! lightSrc.isValid())
+    {
+        lightSrc = ImageCache::getFromMemory (BinaryData::knob_light_png, BinaryData::knob_light_pngSize);
+        darkSrc  = ImageCache::getFromMemory (BinaryData::knob_dark_png,  BinaryData::knob_dark_pngSize);
+    }
+    pixelSize = jmax (16, pixelSize);
+    if (pixelSize == scaledSize && lightScaled.isValid())
+        return;
+    scaledSize = pixelSize;
+    if (pixelSize >= lightSrc.getWidth())
+    {
+        lightScaled = lightSrc; darkScaled = darkSrc;
+    }
+    else
+    {
+        lightScaled = lightSrc.rescaled (pixelSize, pixelSize, Graphics::highResamplingQuality);
+        darkScaled  = darkSrc.rescaled  (pixelSize, pixelSize, Graphics::highResamplingQuality);
+    }
+}
+
 void ThresholdKnobLookAndFeel::drawRotarySlider (Graphics& g, int x, int y, int w, int h,
                                                  float pos, float startAngle, float endAngle, Slider&)
 {
-    // Le chapeau en alu brosse est dans l'image de fond (ses reflets restent fixes sous la lumiere,
-    // comme sur un vrai potard a usinage conique) ; seule la rainure du repere tourne.
+    // Le chapeau tourne vraiment : sa matiere (rayures, taches, usure) et la rainure du repere tournent,
+    // tandis que les reflets coniques de l'usinage restent fixes sous la lumiere (ils sont dans le fond),
+    // exactement comme sur un vrai potard en alu brosse.
     const float angle = startAngle + pos * (endAngle - startAngle);
-    const float s = (float) jmin (w, h) / (knobBox * 2.0f);
+    const float s = (float) jmin (w, h) / (knobBox * 2.0f);     // pixels par unite du repere
     g.addTransform (AffineTransform::scale (s).translated ((float) x + (float) w * 0.5f, (float) y + (float) h * 0.5f));
+    // ici (0, 0) = centre du chapeau, unites du repere 760 x 958
 
+    prepare (roundToInt (spriteHalf * 2.0f * s * physScale));
+    const float rot = angle - photoAngle;
+    const auto place = AffineTransform::scale (spriteHalf * 2.0f / (float) jmax (1, lightScaled.getWidth()))
+                         .translated (-spriteC.x, -spriteC.y)
+                         .rotated (rot);
+    g.setImageResamplingQuality (Graphics::highResamplingQuality);
+    g.setOpacity (1.0f);
+    g.drawImageTransformed (darkScaled,  place);
+    g.drawImageTransformed (lightScaled, place);
+
+    // rainure du repere
     const auto p1 = onCircle ({}, ptrR0, angle), p2 = onCircle ({}, ptrR1, angle);
     Path groove; groove.startNewSubPath (p1); groove.lineTo (p2);
-
-    // la paroi de la rainure opposee a la lumiere (haut-gauche) accroche un filet clair
     const Point<float> dir { std::sin (angle), -std::cos (angle) };
     Point<float> nrm { -dir.y, dir.x };
-    if (nrm.x + nrm.y < 0.0f) nrm = -nrm;            // cote bas-droite
-    const float off = ptrW * 0.5f + 0.35f;
+    if (nrm.x + nrm.y > 0.0f) nrm = -nrm;            // cote tourne vers la lumiere (haut-gauche)
+    const float off = ptrW * 0.5f;
 
-    g.setColour (Colours::black.withAlpha (0.25f));
-    g.strokePath (groove, PathStrokeType (ptrW + 2.4f, PathStrokeType::curved, PathStrokeType::rounded));
-    g.setColour (Colour (0xff141517));
+    g.setColour (Colours::black.withAlpha (0.18f));
+    g.strokePath (groove, PathStrokeType (ptrW + 1.6f, PathStrokeType::curved, PathStrokeType::rounded));
+    g.setColour (Colour (0xff232426));
     g.strokePath (groove, PathStrokeType (ptrW, PathStrokeType::curved, PathStrokeType::rounded));
-    Path hi; hi.startNewSubPath (p1 + nrm * off); hi.lineTo (p2 + nrm * off);
-    g.setColour (Colours::white.withAlpha (0.75f));
-    g.strokePath (hi, PathStrokeType (0.9f, PathStrokeType::curved, PathStrokeType::rounded));
-    Path lo; lo.startNewSubPath (p1 - nrm * (off - 0.2f)); lo.lineTo (p2 - nrm * (off - 0.2f));
-    g.setColour (Colours::black.withAlpha (0.35f));
-    g.strokePath (lo, PathStrokeType (0.8f));
+    // paroi cote lumiere : dans l'ombre (degrade gris) ; paroi opposee : arete sombre nette
+    Path wl; wl.startNewSubPath (p1 + nrm * (off - 0.9f)); wl.lineTo (p2 + nrm * (off - 0.9f));
+    g.setColour (Colour (0xff5d5f62).withAlpha (0.9f));
+    g.strokePath (wl, PathStrokeType (1.3f, PathStrokeType::curved, PathStrokeType::rounded));
+    Path wd; wd.startNewSubPath (p1 - nrm * (off - 0.6f)); wd.lineTo (p2 - nrm * (off - 0.6f));
+    g.setColour (Colour (0xff0e0f10));
+    g.strokePath (wd, PathStrokeType (1.1f, PathStrokeType::curved, PathStrokeType::rounded));
+    Path hl; hl.startNewSubPath (p1 - nrm * (off + 0.5f)); hl.lineTo (p2 - nrm * (off + 0.5f));
+    g.setColour (Colours::white.withAlpha (0.28f));
+    g.strokePath (hl, PathStrokeType (0.7f));
 }
 
 //==============================================================================
@@ -291,7 +334,7 @@ void NgateAudioProcessorEditor::rebuildCaches (float sc)
 
 void NgateAudioProcessorEditor::resized()
 {
-    threshold.setBounds (scaled ({ knobC.x - knobBox, knobC.y - knobBox, knobBox * 2.0f, knobBox * 2.0f }));
+    threshold.setBounds (scaled ({ capC.x - knobBox, capC.y - knobBox, knobBox * 2.0f, knobBox * 2.0f }));
     const float bb = btnR + 10.0f;
     learnBtn.setBounds (scaled ({ learnC.x - bb, learnC.y - bb, bb * 2.0f, bb * 2.0f }));
     bassBtn.setBounds  (scaled ({ bassC.x  - bb, bassC.y  - bb, bb * 2.0f, bb * 2.0f }));

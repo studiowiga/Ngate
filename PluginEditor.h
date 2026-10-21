@@ -16,10 +16,9 @@ public:
     float physScale = 1.0f;
 
 private:
-    juce::Image cache;
-    float cacheAngle = -1000.0f, cacheScale = 0.0f;
-    int cacheSize = 0;
-    juce::Image noise;
+    void prepare (int pixelSize);
+    juce::Image lightSrc, darkSrc, lightScaled, darkScaled;
+    int scaledSize = 0;
 };
 
 //==============================================================================
