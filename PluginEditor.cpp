@@ -544,10 +544,6 @@ void NgateAudioProcessorEditor::drawMeter (Graphics& g)
             glowDot (g, c, 3.9f, 10.5f, db < thr ? dotOrange : dotGreen, powerLevel);
     }
 
-    // repere du seuil : petit anneau blanc
-    const auto t = onCircle (knobC, dotsR, angleFor (thr));
-    g.setColour (Colours::white.withAlpha (0.35f + 0.6f * powerLevel));
-    g.drawEllipse (t.x - 4.6f, t.y - 4.6f, 9.2f, 9.2f, 1.6f);
 }
 
 void NgateAudioProcessorEditor::drawReadout (Graphics& g)

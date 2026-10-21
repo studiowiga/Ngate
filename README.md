@@ -18,7 +18,7 @@ Visuel NGATE (photo) de Studio Wiga mis à l'échelle du projet (1520 × 1916, p
 | Commande | Rôle |
 |---|---|
 | THRESHOLD (gros potard alu brossé) | Seuil d'ouverture, de **−95 dB à 0 dB**. Valeur affichée en haut à droite. Double-clic = −60 dB. Molette = réglage fin |
-| Couronne de points | **Vumètre d'entrée en direct** : orange = sous le seuil (coupé), vert = au-dessus (passe). Anneau blanc = position du seuil |
+| Couronne de points | **Vumètre d'entrée en direct** : orange = sous le seuil (coupé), vert = au-dessus (passe). Le passage orange → vert indique le seuil |
 | LEARN (bouton en haut à droite, sous l'afficheur) | Mesure le bruit de fond pendant 1,5 s (cordes étouffées, volume de la guitare ouvert) puis place le seuil juste au-dessus : +5 dB en HARD, +3 dB en SOFT. Un anneau orange montre la progression. Nouveau clic = annuler. Le ronflement 50/60 Hz n'est pas compté |
 | SOFT / HARD (mini-inverseur) | **HARD** : ouverture 0,3 ms, fermeture rapide (15 ms guitare / 35 ms basse) — idéal high-gain, metal, staccato. **SOFT** : expansion douce 1:3 sous le seuil, retombée de 180 ms / 300 ms — la note s'éteint naturellement. Clic sur le levier = bascule, clic sur SOFT ou HARD = choix direct |
 | BASS (petit bouton) | Mode basse : détecteur ouvert jusqu'à 22 Hz (au lieu de 75 Hz), enveloppe et maintien plus longs → les notes graves ne sont pas hachées. Couronne orange autour du bouton quand actif |
