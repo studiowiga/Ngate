@@ -332,6 +332,28 @@ void NgateAudioProcessorEditor::rebuildCaches (float sc)
     repaint();
 }
 
+//==============================================================================
+// Anti-gel de la fenetre (Windows) : JUCE 8 dessine par defaut avec Direct2D (carte graphique).
+// Avec certains pilotes (Intel notamment) la fenetre du plugin cesse de se rafraichir alors que
+// le DAW continue de tourner. Le moteur logiciel est stable partout et largement assez rapide ici.
+void NgateAudioProcessorEditor::useSoftwareRenderer()
+{
+   #if JUCE_WINDOWS
+    if (auto* peer = getPeer())
+    {
+        int sw = peer->getAvailableRenderingEngines().indexOf ("Software Renderer");
+        if (sw < 0) sw = 0;
+        if (peer->getCurrentRenderingEngine() != sw)
+            peer->setCurrentRenderingEngine (sw);
+    }
+   #endif
+}
+
+void NgateAudioProcessorEditor::parentHierarchyChanged()
+{
+    useSoftwareRenderer();
+}
+
 void NgateAudioProcessorEditor::resized()
 {
     threshold.setBounds (scaled ({ capC.x - knobBox, capC.y - knobBox, knobBox * 2.0f, knobBox * 2.0f }));
@@ -407,6 +429,8 @@ void NgateAudioProcessorEditor::timerCallback()
     const double dt = jlimit (0.0, 0.1, (now - lastTime) * 0.001);
     lastTime = now;
     phase += dt;
+
+    useSoftwareRenderer();   // au cas ou la fenetre a ete recreee par l'hote (changement d'ecran, d'echelle...)
 
     if (resizeSettle > 0 && --resizeSettle == 0)
         rebuildCaches();
