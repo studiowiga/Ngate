@@ -78,3 +78,5 @@ En **premier** dans la chaîne, avant les autres plugins Studio Wiga et avant Ge
 ## Nouveautés v1.3
 
 - v1.3.0 : anti-gel v2 (JUCE 8.0.15, caches refaits par le timer, chien de garde, aucun appel à l'hôte depuis le thread audio)
+
+- v1.3.1 : menu de taille de fenêtre : « 60 % (default) », 75 %, 100 % (plus de taille en pixels)
