@@ -141,6 +141,17 @@ public:
         ccFootToggle = 25  // chaque appui (passage >= 64) inverse l'etat
     };
 
+    // v1.4 MIDI Learn : toutes les commandes de la facade ; numeros par defaut = anciens CC fixes 20 a 25
+    // (anciens projets et pedaliers inchanges). Le footswitch garde ses deux CC : a accrochage et bascule.
+    enum LearnType { learnContinuous, learnToggle, learnTrigger, learnFootswitch, learnFootToggle };
+    struct LearnDef { const char* id; const char* name; int defaultCC; int type; };
+    static constexpr int numLearn = 6;
+    static const LearnDef& learnDef (int i);
+    std::atomic<int> ccMap[numLearn];            // numero de CC de chaque commande, -1 = non assigne
+    std::atomic<int> learnTarget { -1 };         // commande en attente d'un CC (-1 = pas de learn)
+    std::atomic<int> lastLearned { -1 };         // derniere commande apprise (lue et remise a -1 par la fenetre)
+    void resetMidiMap();
+
 private:
     void handleMidi (juce::MidiBuffer& midi);
     void setParam (const juce::String& id, float plainValue);
@@ -180,7 +191,7 @@ private:
     int   learnSamplesLeft = 0, learnSkip = 0;
     float learnMax = 0.0f;
 
-    int prevLearnCC = 0, prevToggleValue = 0;
+    int prevCC[numLearn] {};                     // valeur precedente (boutons et bascules : detection de l'appui)
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (NgateAudioProcessor)
 };

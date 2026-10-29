@@ -205,7 +205,7 @@ NgateAudioProcessorEditor::NgateAudioProcessorEditor (NgateAudioProcessor& p)
 {
     background = ImageCache::getFromMemory (BinaryData::background_png, BinaryData::background_pngSize);
     leverImg   = ImageCache::getFromMemory (BinaryData::lever_png, BinaryData::lever_pngSize);
-    rightClickFwd.callback = [this] { showContextMenu(); };
+    rightClickFwd.callback = [this] (Component* c) { showContextMenu (c == &threshold ? 0 : c == &footswitch ? 4 : -1); };
 
     threshold.setSliderStyle (Slider::RotaryHorizontalVerticalDrag);
     threshold.setTextBoxStyle (Slider::NoTextBox, false, 0, 0);
@@ -227,12 +227,12 @@ NgateAudioProcessorEditor::NgateAudioProcessorEditor (NgateAudioProcessor& p)
         else                      proc.startLearn();
         showStatus();
     };
-    learnBtn.onRightClick = [this] { showContextMenu(); };
+    learnBtn.onRightClick = [this] { showContextMenu (3); };
     addAndMakeVisible (learnBtn);
 
     bassBtn.painter = [this] (Graphics& g, bool pr, bool ov) { paintBass (g, pr, ov); };
     bassBtn.onClick = [this] { toggleParam ("bass"); };
-    bassBtn.onRightClick = [this] { showContextMenu(); };
+    bassBtn.onRightClick = [this] { showContextMenu (2); };
     addAndMakeVisible (bassBtn);
 
     // SOFT --[ switch ]-- HARD : clic sur le switch = bascule, clic sur SOFT ou HARD = choix direct
@@ -244,7 +244,7 @@ NgateAudioProcessorEditor::NgateAudioProcessorEditor (NgateAudioProcessor& p)
         else { setParamValue ("hard", bx > toggleC.x ? 1.0f : 0.0f); proc.currentPreset = -1; }
         showStatus();
     };
-    toggleArea.onRightClick = [this] { showContextMenu(); };
+    toggleArea.onRightClick = [this] { showContextMenu (1); };
     addAndMakeVisible (toggleArea);
 
     footswitch.addMouseListener (&rightClickFwd, false);
@@ -411,6 +411,8 @@ String NgateAudioProcessorEditor::readoutText() const
 String NgateAudioProcessorEditor::buildStatusLine() const
 {
     auto raw = [this] (const char* id) { return proc.apvts.getRawParameterValue (id)->load(); };
+    if (learnLineUntil > 0.0 && Time::getMillisecondCounterHiRes() < learnLineUntil)
+        return learnLine;
     if (proc.learning.load())
         return "LEARNING NOISE FLOOR - mute the strings";
 
@@ -490,6 +492,24 @@ void NgateAudioProcessorEditor::timerCallback()
     const int mc = proc.midiCounter.load();
     if (mc != lastMidiCount) { lastMidiCount = mc; midiFlash = 8; showStatus(); }
     if (midiFlash > 0) --midiFlash;
+
+    // MIDI Learn : attente puis confirmation 2 s dans la ligne d'etat
+    {
+        const int learned = proc.lastLearned.exchange (-1);
+        const int lt = proc.learnTarget.load();
+        if (learned >= 0)
+        {
+            learnLine = String (NgateAudioProcessor::learnDef (learned).name) + " = CC " + String (proc.ccMap[learned].load());
+            learnLineUntil = now + 2000.0;
+            statusUntil = jmax (statusUntil, learnLineUntil);
+        }
+        else if (lt >= 0)
+        {
+            learnLine = "MIDI LEARN: move a control for " + String (NgateAudioProcessor::learnDef (lt).name);
+            learnLineUntil = now + 200.0;
+            statusUntil = jmax (statusUntil, now + 400.0);
+        }
+    }
 
     // fin d'un LEARN : la valeur flashe
     const int lc = proc.learnCounter.load();
@@ -834,10 +854,45 @@ void NgateAudioProcessorEditor::mouseDown (const MouseEvent& e)
         showContextMenu();
 }
 
-void NgateAudioProcessorEditor::showContextMenu()
+void NgateAudioProcessorEditor::addMidiMenu (PopupMenu& menu, int learnIdx)
+{
+    const int lt = proc.learnTarget.load();
+    auto ccText = [this] (int i)
+    {
+        const int cc = proc.ccMap[i].load();
+        return cc >= 0 ? "CC " + String (cc) : String ("none");
+    };
+    // clic droit sur une commande : MIDI Learn de cette commande en tete du menu
+    // (footswitch : ses deux CC, a accrochage et bascule a chaque appui)
+    if (learnIdx >= 0)
+    {
+        const int last = learnIdx == 4 ? 5 : learnIdx;
+        for (int i = learnIdx; i <= last; ++i)
+        {
+            const String name = NgateAudioProcessor::learnDef (i).name;
+            menu.addItem (1000 + i, "MIDI Learn: " + name + " (" + ccText (i) + ")", true, lt == i);
+            menu.addItem (1100 + i, "Clear MIDI: " + name, proc.ccMap[i].load() >= 0);
+        }
+        if (lt >= 0) menu.addItem (1200, "Cancel MIDI learn");
+        menu.addSeparator();
+    }
+}
+
+void NgateAudioProcessorEditor::handleMidiMenu (int r)
+{
+    if (r >= 1000 && r < 1000 + NgateAudioProcessor::numLearn)
+        proc.learnTarget.store (proc.learnTarget.load() == r - 1000 ? -1 : r - 1000);   // re-cliquer annule
+    else if (r >= 1100 && r < 1100 + NgateAudioProcessor::numLearn) proc.ccMap[r - 1100].store (-1);
+    else if (r == 1200) proc.learnTarget.store (-1);
+    else if (r == 1201) { proc.learnTarget.store (-1); proc.resetMidiMap(); }
+    showStatus();
+}
+
+void NgateAudioProcessorEditor::showContextMenu (int learnIdx)
 {
     auto raw = [this] (const char* id) { return proc.apvts.getRawParameterValue (id)->load(); };
     PopupMenu menu;
+    addMidiMenu (menu, learnIdx);
 
     PopupMenu sizes;
     const int defaultW = roundToInt ((float) defaultH * (float) baseW / (float) baseH);
@@ -882,14 +937,19 @@ void NgateAudioProcessorEditor::showContextMenu()
     menu.addSeparator();
 
     PopupMenu midi;
-    midi.addItem (900, "CC 20  Threshold",                          false);
-    midi.addItem (901, "CC 21  Soft / Hard (0-63 soft / 64+ hard)", false);
-    midi.addItem (902, "CC 22  Guitar / Bass (64+ bass)",           false);
-    midi.addItem (903, "CC 23  LEARN (each press)",                 false);
-    midi.addItem (904, "CC 24  Footswitch (64+ ON / 0-63 OFF)",     false);
-    midi.addItem (905, "CC 25  Footswitch toggle (each press)",     false);
-    midi.addItem (906, "Program Change 1-10  Factory presets",      false);
-    menu.addSubMenu ("MIDI map", midi);
+    for (int i = 0; i < NgateAudioProcessor::numLearn; ++i)
+    {
+        const int cc = proc.ccMap[i].load();
+        midi.addItem (1000 + i, "Learn: " + String (NgateAudioProcessor::learnDef (i).name)
+                                 + " (" + (cc >= 0 ? "CC " + String (cc) : String ("none")) + ")",
+                      true, proc.learnTarget.load() == i);
+    }
+    midi.addSeparator();
+    if (proc.learnTarget.load() >= 0) midi.addItem (1200, "Cancel MIDI learn");
+    midi.addItem (1201, "Reset MIDI to defaults (CC 20-25)");
+    midi.addSeparator();
+    midi.addItem (906, "Program Change 1-10  Factory presets", false);
+    menu.addSubMenu ("MIDI", midi);
 
     menu.addSeparator();
     menu.addItem (999, "Ngate noise gate v" + String (JucePlugin_VersionString) + " - STUDIO WIGA", false);
@@ -911,6 +971,7 @@ void NgateAudioProcessorEditor::showContextMenu()
             else if (r >= 100 && r < 200) ed.proc.applyFactoryPreset (r - 100);
             else if (r > 200 && r < 300)  ed.proc.loadUserPreset (r - 200);
             else if (r > 300 && r < 400)  ed.proc.saveUserPreset (r - 300);
+            else if (r >= 1000) { ed.handleMidiMenu (r); return; }
 
             ed.showStatus();
         });

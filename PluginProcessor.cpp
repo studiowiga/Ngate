@@ -45,6 +45,7 @@ NgateAudioProcessor::NgateAudioProcessor()
         pendingValue[i].store (0.0f);
         pendingSet[i].store (false);
     }
+    resetMidiMap();
     startTimerHz (60);
 }
 
@@ -163,6 +164,28 @@ void NgateAudioProcessor::timerCallback()
                 prm->setValueNotifyingHost (prm->convertTo0to1 (pendingValue[i].load (std::memory_order_relaxed)));
 }
 
+const NgateAudioProcessor::LearnDef& NgateAudioProcessor::learnDef (int i)
+{
+    static const LearnDef defs[numLearn] =
+    {
+        { "threshold", "Threshold",         ccThreshold,  learnContinuous },
+        { "hard",      "Soft / Hard",       ccHard,       learnToggle     },   // >= 64 : HARD
+        { "bass",      "Bass",              ccBass,       learnToggle     },   // >= 64 : BASS
+        { "learn",     "LEARN button",      ccLearn,      learnTrigger    },   // chaque appui = LEARN
+        { "active",    "Footswitch",        ccFootswitch, learnFootswitch },   // >= 64 : ON
+        { "active",    "Footswitch toggle", ccFootToggle, learnFootToggle },   // chaque appui inverse l'etat
+    };
+    return defs[juce::jlimit (0, numLearn - 1, i)];
+}
+
+// cles des assignations dans l'etat du projet
+static const char* const learnKey[NgateAudioProcessor::numLearn] = { "threshold", "hard", "bass", "learn", "active", "activeToggle" };
+
+void NgateAudioProcessor::resetMidiMap()
+{
+    for (int i = 0; i < numLearn; ++i) ccMap[i].store (learnDef (i).defaultCC);
+}
+
 void NgateAudioProcessor::handleMidi (juce::MidiBuffer& midi)
 {
     for (const auto meta : midi)
@@ -174,26 +197,47 @@ void NgateAudioProcessor::handleMidi (juce::MidiBuffer& midi)
             const int cc = m.getControllerNumber();
             const int v  = m.getControllerValue();
 
-            switch (cc)
+            // MIDI Learn : le premier CC recu est affecte a la commande visee (il n'agit pas sur le son)
+            const int lt = learnTarget.load();
+            if (lt >= 0 && lt < numLearn && cc < 120)
             {
-                case ccThreshold:
-                    setParamFromAudio ("threshold", minThreshold + (maxThreshold - minThreshold) * (float) v / 127.0f);
-                    currentPreset = -1;
-                    break;
-                case ccHard:       setParamFromAudio ("hard",   v >= 64 ? 1.0f : 0.0f); currentPreset = -1; break;
-                case ccBass:       setParamFromAudio ("bass",   v >= 64 ? 1.0f : 0.0f); currentPreset = -1; break;
-                case ccFootswitch: setParamFromAudio ("active", v >= 64 ? 1.0f : 0.0f); break;
-                case ccLearn:
-                    if (v >= 64 && prevLearnCC < 64)
-                        startLearn();
-                    prevLearnCC = v;
-                    break;
-                case ccFootToggle:
-                    if (v >= 64 && prevToggleValue < 64)
-                        setParamFromAudio ("active", queuedOrCurrent ("active", pActive) > 0.5f ? 0.0f : 1.0f);
-                    prevToggleValue = v;
-                    break;
-                default: break;
+                for (int j = 0; j < numLearn; ++j)
+                    if (j != lt && ccMap[j].load() == cc) ccMap[j].store (-1);   // numero deja pris : l'autre commande est desassignee
+                ccMap[lt].store (cc);
+                prevCC[lt] = v;
+                lastLearned.store (lt);
+                learnTarget.store (-1);
+                lastMidiCC = cc; lastMidiValue = v; ++midiCounter;
+                continue;
+            }
+
+            for (int j = 0; j < numLearn; ++j)
+            {
+                if (ccMap[j].load (std::memory_order_relaxed) != cc) continue;
+                switch (learnDef (j).type)
+                {
+                    case learnContinuous:
+                        setParamFromAudio ("threshold", minThreshold + (maxThreshold - minThreshold) * (float) v / 127.0f);
+                        currentPreset = -1;
+                        break;
+                    case learnToggle:
+                        setParamFromAudio (learnDef (j).id, v >= 64 ? 1.0f : 0.0f);
+                        currentPreset = -1;
+                        break;
+                    case learnFootswitch:
+                        setParamFromAudio ("active", v >= 64 ? 1.0f : 0.0f);
+                        break;
+                    case learnTrigger:
+                        if (v >= 64 && prevCC[j] < 64)
+                            startLearn();
+                        break;
+                    case learnFootToggle:
+                        if (v >= 64 && prevCC[j] < 64)
+                            setParamFromAudio ("active", queuedOrCurrent ("active", pActive) > 0.5f ? 0.0f : 1.0f);
+                        break;
+                    default: break;
+                }
+                prevCC[j] = v;
             }
 
             lastMidiCC    = cc;
@@ -478,6 +522,8 @@ void NgateAudioProcessor::getStateInformation (juce::MemoryBlock& destData)
 {
     auto state = apvts.copyState();
     state.setProperty ("currentPreset", currentPreset.load(), nullptr);
+    for (int i = 0; i < numLearn; ++i)
+        state.setProperty (juce::String ("cc_") + learnKey[i], ccMap[i].load(), nullptr);
     if (auto xml = state.createXml())
         copyXmlToBinary (*xml, destData);
 }
@@ -490,6 +536,9 @@ void NgateAudioProcessor::setStateInformation (const void* data, int sizeInBytes
         {
             auto state = juce::ValueTree::fromXml (*xml);
             currentPreset = (int) state.getProperty ("currentPreset", 0);
+            // assignations MIDI Learn (ancien projet sans ces proprietes : numeros par defaut 20 a 25)
+            for (int i = 0; i < numLearn; ++i)
+                ccMap[i].store (juce::jlimit (-1, 127, (int) state.getProperty (juce::String ("cc_") + learnKey[i], learnDef (i).defaultCC)));
             apvts.replaceState (state);
         }
     }

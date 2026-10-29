@@ -95,11 +95,11 @@ private:
 //==============================================================================
 struct RightClickForwarder : public juce::MouseListener
 {
-    std::function<void()> callback;
+    std::function<void (juce::Component*)> callback;    // composant clique : menu MIDI Learn de cette commande
     void mouseDown (const juce::MouseEvent& e) override
     {
         if (e.mods.isPopupMenu() && callback)
-            callback();
+            callback (e.eventComponent);
     }
 };
 
@@ -125,7 +125,9 @@ public:
 private:
     void timerCallback() override;
     void useSoftwareRenderer();
-    void showContextMenu();
+    void showContextMenu (int learnIdx = -1);     // learnIdx >= 0 : clic droit sur une commande (MIDI Learn en tete du menu)
+    void addMidiMenu (juce::PopupMenu& menu, int learnIdx);
+    void handleMidiMenu (int r);
     void setScaledHeight (int h);
     void setParamValue (const char* id, float plain);
     void toggleParam (const char* id);
@@ -188,6 +190,9 @@ private:
     float statusAlpha = 0.0f;
     int lastMidiCount = 0;
     int midiFlash = 0;
+    // MIDI Learn : message dans la ligne d'etat (attente, puis « <Commande> = CC n » 2 s)
+    juce::String learnLine;
+    double learnLineUntil = 0.0;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (NgateAudioProcessorEditor)
 };

@@ -48,6 +48,10 @@ Anti-« bégaiement » : hystérésis (3 dB en HARD, 6 dB en SOFT) + temps de ma
 | CC 25 | Footswitch bascule (chaque appui) |
 | Program Change 1-10 | Presets d'usine |
 
+Ces numéros sont les assignations par défaut : clic droit sur une commande → « MIDI Learn: … » puis bouger
+la pédale / appuyer sur le footswitch du contrôleur pour la réassigner (« Clear MIDI: … » pour la libérer,
+MIDI → « Reset MIDI to defaults » pour revenir aux CC 20-25). Les assignations sont sauvegardées avec le projet.
+
 Tous les paramètres sont aussi automatisables et assignables en MIDI-learn dans le DAW.
 
 ## Presets d'usine
@@ -80,3 +84,5 @@ En **premier** dans la chaîne, avant les autres plugins Studio Wiga et avant Ge
 - v1.3.0 : anti-gel v2 (JUCE 8.0.15, caches refaits par le timer, chien de garde, aucun appel à l'hôte depuis le thread audio)
 
 - v1.3.1 : menu de taille de fenêtre : « 60 % (default) », 75 %, 100 % (plus de taille en pixels)
+
+- v1.4.0 : MIDI Learn au clic droit sur chaque commande (Clear MIDI, assignations sauvegardées avec le projet)
