@@ -60,11 +60,12 @@ namespace wiga
 }
 
 //==============================================================================
-class NgateAudioProcessor : public juce::AudioProcessor
+class NgateAudioProcessor : public juce::AudioProcessor,
+                            private juce::Timer
 {
 public:
     NgateAudioProcessor();
-    ~NgateAudioProcessor() override = default;
+    ~NgateAudioProcessor() override;
 
     //==========================================================================
     void prepareToPlay (double sampleRate, int samplesPerBlock) override;
@@ -144,6 +145,17 @@ private:
     void handleMidi (juce::MidiBuffer& midi);
     void setParam (const juce::String& id, float plainValue);
     void updateDetectorFilters (bool bass);
+
+    // Anti-gel v2 : depuis le thread audio, aucun appel a l'hote ; les valeurs sont mises en file
+    // et transmises au DAW par un timer du thread de messages (60 Hz).
+    void timerCallback() override;
+    void setParamFromAudio (const char* id, float plain);
+    float queuedOrCurrent (const char* id, std::atomic<float>* current) const;
+    static constexpr int numQueued = 4;
+    static const char* queuedId (int i);
+    std::atomic<float> pendingValue[numQueued];
+    std::atomic<bool>  pendingSet[numQueued];
+    std::atomic<int>   pendingPreset { -1 };
 
     std::atomic<float>* pThreshold = nullptr;
     std::atomic<float>* pHard      = nullptr;

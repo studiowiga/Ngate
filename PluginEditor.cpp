@@ -118,15 +118,19 @@ void ThresholdKnobLookAndFeel::drawRotarySlider (Graphics& g, int x, int y, int 
     g.addTransform (AffineTransform::scale (s).translated ((float) x + (float) w * 0.5f, (float) y + (float) h * 0.5f));
     // ici (0, 0) = centre du chapeau, unites du repere 760 x 958
 
-    prepare (roundToInt (spriteHalf * 2.0f * s * physScale));
+    // anti-gel v2 : aucun rescale ici, les sprites sont mis a l'echelle par le timer de l'editeur
+    if (! lightSrc.isValid())
+        return;                            // sprites charges par rebuildCaches() (constructeur)
+    const Image& light = lightScaled.isValid() ? lightScaled : lightSrc;
+    const Image& dark  = darkScaled.isValid()  ? darkScaled  : darkSrc;
     const float rot = angle - photoAngle;
-    const auto place = AffineTransform::scale (spriteHalf * 2.0f / (float) jmax (1, lightScaled.getWidth()))
+    const auto place = AffineTransform::scale (spriteHalf * 2.0f / (float) jmax (1, light.getWidth()))
                          .translated (-spriteC.x, -spriteC.y)
                          .rotated (rot);
     g.setImageResamplingQuality (Graphics::highResamplingQuality);
     g.setOpacity (1.0f);
-    g.drawImageTransformed (darkScaled,  place);
-    g.drawImageTransformed (lightScaled, place);
+    g.drawImageTransformed (dark,  place);
+    g.drawImageTransformed (light, place);
 
     // rainure du repere
     const auto p1 = onCircle ({}, ptrR0, angle), p2 = onCircle ({}, ptrR1, angle);
@@ -260,6 +264,7 @@ NgateAudioProcessorEditor::NgateAudioProcessorEditor (NgateAudioProcessor& p)
     setResizeLimits (defaultW, defaultH, baseW * 3 / 2, baseH * 3 / 2);
     if (auto* cons = getConstrainer())
         cons->setFixedAspectRatio ((double) baseW / (double) baseH);
+    setOpaque (true);                      // anti-gel : l'hote ne redessine jamais ce qui est derriere la fenetre
     setSize (defaultW, defaultH);
     rebuildCaches();
 
@@ -329,6 +334,7 @@ void NgateAudioProcessorEditor::rebuildCaches (float sc)
     bgScaled = (pw >= background.getWidth()) ? background
                                              : background.rescaled (pw, ph, Graphics::highResamplingQuality);
     lnf.physScale = sc;
+    lnf.prepare (roundToInt (spriteHalf * 2.0f * ((float) h / (float) baseH) * sc));   // sprites du potard
     repaint();
 }
 
@@ -336,10 +342,22 @@ void NgateAudioProcessorEditor::rebuildCaches (float sc)
 // Anti-gel de la fenetre (Windows) : JUCE 8 dessine par defaut avec Direct2D (carte graphique).
 // Avec certains pilotes (Intel notamment) la fenetre du plugin cesse de se rafraichir alors que
 // le DAW continue de tourner. Le moteur logiciel est stable partout et largement assez rapide ici.
+//
+// Anti-gel v2 (Studio Wiga) :
+//  1. moteur de rendu logiciel force sur Windows, applique a chaque nouvelle fenetre hote (peer)
+//     et reverifie toutes les secondes, jamais en boucle ;
+//  2. aucun calcul lourd dans paint() : les caches d'images (fond, sprites du potard) sont reconstruits
+//     par le timer seulement, apres stabilisation de la taille ou quand l'echelle d'affichage change
+//     (au plus toutes les 250 ms) ;
+//  3. chien de garde : si un redessin demande n'est pas arrive au bout de 1,5 s alors que la fenetre est
+//     visible, le moteur de rendu est reapplique et toute la fenetre est redessinee ;
+//  4. cote audio : aucun appel a l'hote depuis le thread audio (voir PluginProcessor).
 void NgateAudioProcessorEditor::useSoftwareRenderer()
 {
+    auto* peer = getPeer();
+    if (peer != lastPeer) { lastPeer = peer; repaint(); }
    #if JUCE_WINDOWS
-    if (auto* peer = getPeer())
+    if (peer != nullptr)
     {
         int sw = peer->getAvailableRenderingEngines().indexOf ("Software Renderer");
         if (sw < 0) sw = 0;
@@ -354,6 +372,19 @@ void NgateAudioProcessorEditor::parentHierarchyChanged()
     useSoftwareRenderer();
 }
 
+void NgateAudioProcessorEditor::visibilityChanged()
+{
+    useSoftwareRenderer();
+    if (isShowing())
+        repaint();
+}
+
+void NgateAudioProcessorEditor::askRepaint (Rectangle<int> r)
+{
+    if (repaintAskedMs <= 0.0) repaintAskedMs = Time::getMillisecondCounterHiRes();
+    repaint (r);
+}
+
 void NgateAudioProcessorEditor::resized()
 {
     threshold.setBounds (scaled ({ capC.x - knobBox, capC.y - knobBox, knobBox * 2.0f, knobBox * 2.0f }));
@@ -363,6 +394,7 @@ void NgateAudioProcessorEditor::resized()
     toggleArea.setBounds (scaled (toggleRect));
     footswitch.setBounds (scaled ({ footPos.x - footR, footPos.y - footR, footR * 2.0f, footR * 2.0f }));
 
+    // anti-gel : jamais de setSize ici (les limites du constrainer suffisent)
     resizeSettle = 4;   // on attend que la taille se stabilise avant de refaire les caches
 }
 
@@ -430,10 +462,28 @@ void NgateAudioProcessorEditor::timerCallback()
     lastTime = now;
     phase += dt;
 
-    useSoftwareRenderer();   // au cas ou la fenetre a ete recreee par l'hote (changement d'ecran, d'echelle...)
+    // au cas ou la fenetre a ete recreee par l'hote (changement d'ecran, d'echelle...) : au plus 1 fois par seconde
+    if (getPeer() != lastPeer || now - lastRendererCheckMs > 1000.0) { lastRendererCheckMs = now; useSoftwareRenderer(); }
 
+    // caches : reconstruits ici seulement (jamais dans paint)
     if (resizeSettle > 0 && --resizeSettle == 0)
         rebuildCaches();
+    else if (resizeSettle == 0 && now - lastScaleCheckMs > 250.0)
+    {
+        lastScaleCheckMs = now;
+        const float sc = physicalScale();
+        if (std::abs (sc - cacheScale) > 0.01f)
+            rebuildCaches (sc);
+    }
+
+    // chien de garde : un redessin demande n'arrive pas -> on relance le moteur de rendu et on redessine tout
+    if (repaintAskedMs > 0.0 && isShowing() && now - repaintAskedMs > 1500.0 && lastPaintMs < repaintAskedMs)
+    {
+        repaintAskedMs = 0.0;
+        lastPeer = nullptr;
+        useSoftwareRenderer();
+        repaint();
+    }
 
     auto raw = [this] (const char* id) { return proc.apvts.getRawParameterValue (id)->load(); };
 
@@ -494,42 +544,42 @@ void NgateAudioProcessorEditor::timerCallback()
 
     // --- on ne redessine que ce qui a change ---
     const int dots = litDots();
-    if (dots != drawnDots || std::abs (powerLevel - drawnPower) > 0.003f)
+    if (dots != drawnDots || std::abs (powerLevel - drawnPower) > 0.002f)
     {
         drawnDots = dots;
-        repaint (scaled ({ knobC.x - dotsR - 14.0f, knobC.y - dotsR - 14.0f, (dotsR + 14.0f) * 2.0f, (dotsR + 14.0f) * 2.0f }));
+        askRepaint (scaled ({ knobC.x - dotsR - 14.0f, knobC.y - dotsR - 14.0f, (dotsR + 14.0f) * 2.0f, (dotsR + 14.0f) * 2.0f }));
     }
-    if (std::abs (powerLevel - drawnPower) > 0.003f)
+    if (std::abs (powerLevel - drawnPower) > 0.002f)
     {
         drawnPower = powerLevel;
-        repaint (scaled (readoutRect.expanded (4.0f)));
+        askRepaint (scaled (readoutRect.expanded (4.0f)));
     }
     if (readoutText() != drawnReadout || learnDone > 0.0f)
     {
         drawnReadout = readoutText();
-        repaint (scaled (readoutRect.expanded (4.0f)));
+        askRepaint (scaled (readoutRect.expanded (4.0f)));
     }
-    if (std::abs (openLevel - drawnOpen) > 0.003f)
+    if (std::abs (openLevel - drawnOpen) > 0.002f)
     {
         drawnOpen = openLevel;
-        repaint (scaled ({ openC.x - 28.0f, openC.y - 28.0f, 56.0f, 56.0f }));
+        askRepaint (scaled ({ openC.x - 28.0f, openC.y - 28.0f, 56.0f, 56.0f }));
     }
-    if (std::abs (gateLevel - drawnGate) > 0.003f)
+    if (std::abs (gateLevel - drawnGate) > 0.002f)
     {
         drawnGate = gateLevel;
-        repaint (scaled ({ gateC.x - 28.0f, gateC.y - 28.0f, 56.0f, 56.0f }));
+        askRepaint (scaled ({ gateC.x - 28.0f, gateC.y - 28.0f, 56.0f, 56.0f }));
     }
     if (std::abs (leverPos - drawnLever) > 0.002f)
     {
         drawnLever = leverPos;
-        repaint (scaled ({ toggleC.x - 50.0f, toggleC.y - 16.0f, 100.0f, 36.0f }));
+        askRepaint (scaled ({ toggleC.x - 50.0f, toggleC.y - 16.0f, 100.0f, 36.0f }));
     }
-    if (std::abs (bassLevel - drawnBass) > 0.003f)
+    if (std::abs (bassLevel - drawnBass) > 0.002f)
     {
         drawnBass = bassLevel;
         bassBtn.repaint();
     }
-    if (std::abs (learnGlow - drawnLearn) > 0.003f || proc.learning.load() || learnDone > 0.0f)
+    if (std::abs (learnGlow - drawnLearn) > 0.002f || proc.learning.load() || learnDone > 0.0f)
     {
         drawnLearn = learnGlow;
         learnBtn.repaint();
@@ -540,10 +590,10 @@ void NgateAudioProcessorEditor::timerCallback()
     const bool textChanged = newStatus != lastStatus || newPreset != lastPreset;
     lastStatus = newStatus;
     lastPreset = newPreset;
-    if (std::abs (statusAlpha - drawnStatus) > 0.003f || (statusAlpha > 0.0f && (textChanged || midiFlash > 0)))
+    if (std::abs (statusAlpha - drawnStatus) > 0.002f || (statusAlpha > 0.0f && (textChanged || midiFlash > 0)))
     {
         drawnStatus = statusAlpha;
-        repaint (scaled (statusRect.expanded (4.0f)));
+        askRepaint (scaled (statusRect.expanded (4.0f)));
     }
 }
 
@@ -750,15 +800,15 @@ void NgateAudioProcessorEditor::drawStatus (Graphics& g)
 
 void NgateAudioProcessorEditor::paint (Graphics& g)
 {
+    lastPaintMs = Time::getMillisecondCounterHiRes();
+    repaintAskedMs = 0.0;
     g.fillAll (Colours::black);
-    const float pix = jlimit (1.0f, 4.0f, g.getInternalContext().getPhysicalPixelScaleFactor());
-    if (! bgScaled.isValid() || (resizeSettle == 0 && std::abs (pix - cacheScale) > 0.01f))
-        rebuildCaches (pix);
-
-    g.setImageResamplingQuality (bgScaled.getWidth() == background.getWidth() ? Graphics::highResamplingQuality
-                                                                               : Graphics::lowResamplingQuality);
-    if (bgScaled.isValid())
-        g.drawImage (bgScaled, getLocalBounds().toFloat());
+    // anti-gel : aucun rescale ici, on dessine le cache existant (ou l'original en attendant le timer)
+    const Image& bg = bgScaled.isValid() ? bgScaled : background;
+    g.setImageResamplingQuality (bg.getWidth() == background.getWidth() ? Graphics::highResamplingQuality
+                                                                         : Graphics::lowResamplingQuality);
+    if (bg.isValid())
+        g.drawImage (bg, getLocalBounds().toFloat());
 
     const float s = (float) getHeight() / (float) baseH;
     g.addTransform (AffineTransform::scale (s));

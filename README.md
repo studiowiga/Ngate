@@ -74,3 +74,7 @@ En **premier** dans la chaîne, avant les autres plugins Studio Wiga et avant Ge
 - Le gros potard THRESHOLD tourne physiquement (matière du chapeau + repère), reflets d'usinage fixes.
 - Vis du bas identiques à celles du haut.
 - Notice : pédale détourée.
+
+## Nouveautés v1.3
+
+- v1.3.0 : anti-gel v2 (JUCE 8.0.15, caches refaits par le timer, chien de garde, aucun appel à l'hôte depuis le thread audio)

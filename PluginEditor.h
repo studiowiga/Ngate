@@ -14,9 +14,9 @@ public:
     void drawRotarySlider (juce::Graphics&, int x, int y, int w, int h,
                            float pos, float startAngle, float endAngle, juce::Slider&) override;
     float physScale = 1.0f;
+    void prepare (int pixelSize);          // anti-gel v2 : appele par le timer de l'editeur seulement
 
 private:
-    void prepare (int pixelSize);
     juce::Image lightSrc, darkSrc, lightScaled, darkScaled;
     int scaledSize = 0;
 };
@@ -154,6 +154,11 @@ private:
     int cacheW = 0, cacheH = 0;
     float cacheScale = 0.0f;
     int resizeSettle = 0;
+    // anti-gel v2 : suivi de la fenetre hote, de l'echelle et des redessins
+    void* lastPeer = nullptr;
+    double lastPaintMs = 0.0, repaintAskedMs = 0.0, lastScaleCheckMs = 0.0, lastRendererCheckMs = 0.0;
+    void askRepaint (juce::Rectangle<int> r);
+    void visibilityChanged() override;
 
     juce::Slider threshold;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> aThreshold;

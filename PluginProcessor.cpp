@@ -1,5 +1,6 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
+#include <cstring>
 
 //==============================================================================
 // Presets d'usine
@@ -38,6 +39,18 @@ NgateAudioProcessor::NgateAudioProcessor()
     pBass      = apvts.getRawParameterValue ("bass");
     pRange     = apvts.getRawParameterValue ("range");
     pActive    = apvts.getRawParameterValue ("active");
+
+    for (int i = 0; i < numQueued; ++i)
+    {
+        pendingValue[i].store (0.0f);
+        pendingSet[i].store (false);
+    }
+    startTimerHz (60);
+}
+
+NgateAudioProcessor::~NgateAudioProcessor()
+{
+    stopTimer();
 }
 
 juce::AudioProcessorValueTreeState::ParameterLayout NgateAudioProcessor::createLayout()
@@ -111,6 +124,45 @@ void NgateAudioProcessor::setParam (const juce::String& id, float plainValue)
         p->setValueNotifyingHost (p->convertTo0to1 (plainValue));
 }
 
+// Anti-gel v2 (Studio Wiga) : jamais d'appel a l'hote (setValueNotifyingHost) depuis le thread audio.
+// Le MIDI et la fin du LEARN mettent la valeur en file ; un timer du thread de messages la transmet au DAW.
+const char* NgateAudioProcessor::queuedId (int i)
+{
+    static const char* ids[numQueued] = { "threshold", "hard", "bass", "active" };
+    return ids[juce::jlimit (0, numQueued - 1, i)];
+}
+
+void NgateAudioProcessor::setParamFromAudio (const char* id, float plain)
+{
+    for (int i = 0; i < numQueued; ++i)
+        if (std::strcmp (id, queuedId (i)) == 0)
+        {
+            pendingValue[i].store (plain, std::memory_order_relaxed);
+            pendingSet[i].store (true, std::memory_order_release);
+            return;
+        }
+}
+
+float NgateAudioProcessor::queuedOrCurrent (const char* id, std::atomic<float>* current) const
+{
+    for (int i = 0; i < numQueued; ++i)
+        if (std::strcmp (id, queuedId (i)) == 0 && pendingSet[i].load (std::memory_order_acquire))
+            return pendingValue[i].load (std::memory_order_relaxed);
+    return current->load (std::memory_order_relaxed);
+}
+
+void NgateAudioProcessor::timerCallback()
+{
+    const int preset = pendingPreset.exchange (-1);
+    if (preset >= 0)
+        applyFactoryPreset (preset);
+
+    for (int i = 0; i < numQueued; ++i)
+        if (pendingSet[i].exchange (false, std::memory_order_acquire))
+            if (auto* prm = apvts.getParameter (queuedId (i)))
+                prm->setValueNotifyingHost (prm->convertTo0to1 (pendingValue[i].load (std::memory_order_relaxed)));
+}
+
 void NgateAudioProcessor::handleMidi (juce::MidiBuffer& midi)
 {
     for (const auto meta : midi)
@@ -125,12 +177,12 @@ void NgateAudioProcessor::handleMidi (juce::MidiBuffer& midi)
             switch (cc)
             {
                 case ccThreshold:
-                    setParam ("threshold", minThreshold + (maxThreshold - minThreshold) * (float) v / 127.0f);
+                    setParamFromAudio ("threshold", minThreshold + (maxThreshold - minThreshold) * (float) v / 127.0f);
                     currentPreset = -1;
                     break;
-                case ccHard:       setParam ("hard",   v >= 64 ? 1.0f : 0.0f); currentPreset = -1; break;
-                case ccBass:       setParam ("bass",   v >= 64 ? 1.0f : 0.0f); currentPreset = -1; break;
-                case ccFootswitch: setParam ("active", v >= 64 ? 1.0f : 0.0f); break;
+                case ccHard:       setParamFromAudio ("hard",   v >= 64 ? 1.0f : 0.0f); currentPreset = -1; break;
+                case ccBass:       setParamFromAudio ("bass",   v >= 64 ? 1.0f : 0.0f); currentPreset = -1; break;
+                case ccFootswitch: setParamFromAudio ("active", v >= 64 ? 1.0f : 0.0f); break;
                 case ccLearn:
                     if (v >= 64 && prevLearnCC < 64)
                         startLearn();
@@ -138,7 +190,7 @@ void NgateAudioProcessor::handleMidi (juce::MidiBuffer& midi)
                     break;
                 case ccFootToggle:
                     if (v >= 64 && prevToggleValue < 64)
-                        setParam ("active", pActive->load() > 0.5f ? 0.0f : 1.0f);
+                        setParamFromAudio ("active", queuedOrCurrent ("active", pActive) > 0.5f ? 0.0f : 1.0f);
                     prevToggleValue = v;
                     break;
                 default: break;
@@ -152,7 +204,7 @@ void NgateAudioProcessor::handleMidi (juce::MidiBuffer& midi)
         {
             const int prog = m.getProgramChangeNumber();
             if (prog < getNumFactoryPresets())
-                applyFactoryPreset (prog);
+                pendingPreset.store (prog);      // applique par le timer (thread de messages)
 
             lastMidiProgram = prog;
             lastMidiCC      = -2; // indique un Program Change
@@ -193,10 +245,10 @@ void NgateAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
     if (numCh == 0 || n == 0)
         return;
 
-    const bool bass = pBass->load() > 0.5f;
-    const bool hard = pHard->load() > 0.5f;
-    const int  range = juce::roundToInt (pRange->load());
-    const bool on = pActive->load() > 0.5f;
+    const bool bass = pBass->load (std::memory_order_relaxed) > 0.5f;
+    const bool hard = pHard->load (std::memory_order_relaxed) > 0.5f;
+    const int  range = juce::roundToInt (pRange->load (std::memory_order_relaxed));
+    const bool on = pActive->load (std::memory_order_relaxed) > 0.5f;
     updateDetectorFilters (bass);
 
     // --- LEARN ---
@@ -225,7 +277,7 @@ void NgateAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
     const float actCoef = coef (8.0);
     const float thrCoef = coef (20.0);
     const float targetActive = on ? 1.0f : 0.0f;
-    const float thrTarget = pThreshold->load();
+    const float thrTarget = pThreshold->load (std::memory_order_relaxed);
 
     float* L = buffer.getWritePointer (0);
     float* R = numCh > 1 ? buffer.getWritePointer (1) : nullptr;
@@ -293,7 +345,7 @@ void NgateAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
             const float noiseDb = juce::Decibels::gainToDecibels (learnMax, -120.0f);
             const float margin  = hard ? 5.0f : 3.0f;
             learnedNoiseDb = noiseDb;
-            setParam ("threshold", juce::jlimit (minThreshold, -6.0f, noiseDb + margin));
+            setParamFromAudio ("threshold", juce::jlimit (minThreshold, -6.0f, noiseDb + margin));   // transmis par le timer
             currentPreset = -1;
             learning = false;
             learnProgress = 1.0f;
