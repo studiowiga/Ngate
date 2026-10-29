@@ -6,7 +6,7 @@ Visuel NGATE (photo) de Studio Wiga mis à l'échelle du projet (1520 × 1916, p
 
 ## Installation via GitHub
 
-1. Déposer à la racine du dépôt : `background.png`, `lever.png`, `knob_light.png`, `knob_dark.png`, `CMakeLists.txt`, `PluginProcessor.h/.cpp`, `PluginEditor.h/.cpp`, `README.md`, `Ngate-Manual.pdf` et le dossier `.github/workflows/build.yml`.
+1. Déposer à la racine du dépôt : `background.png`, `lever.png`, `knob_light.png`, `knob_dark.png`, `CMakeLists.txt`, `PluginProcessor.h/.cpp`, `PluginEditor.h/.cpp`, `README.md`, `docs/NGATE_Manual_EN-FR_v1.4.0.pdf` (notice EN puis FR) et le dossier `.github/workflows/build.yml`.
 2. Le push lance la compilation (onglet **Actions**) : Windows (`windows-2022`) et macOS (binaire universel).
 3. Télécharger l'artefact :
    - **Windows** : copier `Ngate.vst3` dans `C:\Program Files\Common Files\VST3\`
@@ -29,8 +29,8 @@ Anti-« bégaiement » : hystérésis (3 dB en HARD, 6 dB en SOFT) + temps de ma
 
 ## Interface
 
-- Fenêtre ouverte par défaut à **391 × 493**, impossible de la réduire en dessous, proportions bloquées, jusqu'à 150 % : **mêmes réglages de taille qu'Echoflex**.
-- **Clic droit** : taille (Default / 75 % / 100 %), presets d'usine, presets utilisateur 1 à 9 (charger / sauvegarder), LEARN, mode Soft/Hard, Guitar/Bass, **Range** (coupure totale / −40 dB / −20 dB quand le gate est fermé), table MIDI.
+- Fenêtre ouverte par défaut à **60 % (default)**, impossible de la réduire en dessous, proportions bloquées, jusqu'à 150 % : **mêmes réglages de taille qu'Echoflex**.
+- **Clic droit** : taille (60 % (default) / 75 % / 100 %), presets d'usine, presets utilisateur 1 à 9 (charger / sauvegarder), LEARN, mode Soft/Hard, Guitar/Bass, **Range** (coupure totale / −40 dB / −20 dB quand le gate est fermé), table MIDI.
 - Potard en aluminium brossé qui tourne vraiment : la matière du chapeau (rayures, taches, usure : `knob_light.png` / `knob_dark.png`) et la rainure du repère tournent autour du centre réel du chapeau, tandis que les reflets coniques de l'usinage restent fixes sous la lumière, comme sur un vrai potard.
 - Mini-inverseur SOFT/HARD animé : le levier de la photo (`lever.png`) bascule (sa projection raccourcit puis repart de l'autre côté), avec son ombre portée.
 - Boutons LEARN et BASS : enfoncement au clic, couronne orange quand actifs.
